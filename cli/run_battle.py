@@ -22,10 +22,15 @@ import time
 import argparse
 import numpy as np
 
-from .. import helpers
-from .. import make
+#from .. import helpers
+#from .. import make
+
+from pommerman import helpers, make
+from pommerman.agents import TensorForceAgent
+
 from pommerman import utility
 
+import pdb
 
 def run(args, num_times=1, seed=None):
     '''Wrapper to help start the game'''
@@ -42,7 +47,19 @@ def run(args, num_times=1, seed=None):
         for agent_id, agent_string in enumerate(args.agents.split(','))
     ]
 
+    #TODO: DELETE
+    #pdb.set_trace()
+    ###############
+
     env = make(config, agents, game_state_file, render_mode=render_mode)
+
+    for i, agent_string in enumerate(args.agents.split(',')):
+        if agent_string.split('::')[0] == "tensorforce":
+            print("run_buttle[51] ", type(agents[i]))
+            a = agents[i]
+            a_env = a.initialize(env)
+            a_env.restore_model(directory="./pommerman/cli/saved_win/")
+            # agents[i].initialize(env).restore_model(directory="./saved_win/")
 
     def _run(record_pngs_dir=None, record_json_dir=None):
         '''Runs a game'''

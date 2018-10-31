@@ -1,8 +1,8 @@
 """
 A Work-In-Progress agent using Tensorforce
 """
-from . import BaseAgent
-from .. import characters
+from pommerman.agents import BaseAgent
+from pommerman import characters
 
 
 class TensorForceAgent(BaseAgent):

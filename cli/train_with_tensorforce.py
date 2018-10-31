@@ -19,8 +19,11 @@ from tensorforce.execution import Runner
 from tensorforce.contrib.openai_gym import OpenAIGym
 import gym
 
-from .. import helpers, make
-from ..agents import TensorForceAgent
+from pommerman import helpers, make
+from pommerman.agents import TensorForceAgent
+
+# from .. import helpers, make
+# from ..agents import TensorForceAgent
 
 
 CLIENT = docker.from_env()
@@ -43,6 +46,10 @@ class WrappedEnv(OpenAIGym):
             self.gym.render()
 
         obs = self.gym.get_observations()
+
+        S_DIM = self.gym.observation_space.shape[0]
+        A_DIM = self.gym.action_space.n
+
         all_actions = self.gym.act(obs)
         all_actions.insert(self.gym.training_agent, actions)
         state, reward, terminal, _ = self.gym.step(all_actions)
@@ -115,6 +122,10 @@ def main():
     ]
 
     env = make(config, agents, game_state_file)
+    #TODO: DELETE!
+    observation = env.reset()
+    print(observation)
+    ###########
     training_agent = None
 
     for agent in agents:
@@ -130,13 +141,26 @@ def main():
         assert not os.path.isdir(args.record_json_dir)
         os.makedirs(args.record_json_dir)
 
+    def episode_finished(r):
+
+        if not (r.episode % 100):
+            print(
+                "Finished episode {ep} after {ts} timesteps (reward: {reward})".format(ep=r.episode,
+                                                                                       ts=r.episode_timestep,
+                                                                                       reward=r.episode_rewards[-1]))
+        if (r.episode_rewards[-1] >= 0):
+            r.agent.save_model(directory="./clone_saved_win/")
+        elif not (r.episode % 1000):
+            r.agent.save_model(directory="./saved_played/")
+        return True
+
     # Create a Proximal Policy Optimization agent
     agent = training_agent.initialize(env)
-
     atexit.register(functools.partial(clean_up_agents, agents))
     wrapped_env = WrappedEnv(env, visualize=args.render)
     runner = Runner(agent=agent, environment=wrapped_env)
-    runner.run(episodes=10, max_episode_timesteps=2000)
+    agent.restore_model(directory="/home/rishchen/Source/Work/playground/pommerman/cli/clone_saved_win/")
+    runner.run(episodes=10, max_episode_timesteps=20000, episode_finished=episode_finished)
     print("Stats: ", runner.episode_rewards, runner.episode_timesteps,
           runner.episode_times)
 

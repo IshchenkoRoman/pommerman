@@ -12,6 +12,10 @@ from pommerman import helpers, make
 from pommerman.agents import TensorForceAgent
 from TensorFlowAgent import TensorFlowAgent
 
+#A_DIM 6
+#S_DIM 372
+#BOARD 11x11
+
 def clean_up_agents(agents):
     """Stops all agents"""
     return [agent.shutdown() for agent in agents]
@@ -29,6 +33,10 @@ class WrapperEnv(OpenAIGym):
             self.gym.render()
 
         obs = self.gym.get_observation()
+
+        S_DIM = obs.observation_space.shape[0]
+        A_DIM = obs.action_space.n
+
         all_actions = self.gym.act(obs)
         all_actions.insert(self.gym.training_agent, actions)
         state, reward, terminal, _ = self.gym.step(all_actions)
@@ -52,7 +60,7 @@ def main():
              "configs.py for options.")
     parser.add_argument(
         "--agents",
-        default="tensorflow::agents.TensorFlowAgent,test::agents.SimpleAgent,"
+        default="tensorflow::agents.TensorFlowAgent,tensorforce::ppo,"
                 "test::agents.SimpleAgent,test::agents.SimpleAgent",
         help="Comma delineated list of agent types and docker "
              "locations to run the agents.")
@@ -81,7 +89,7 @@ def main():
     config = args.config
     record_pngs_dir = args.record_pngs_dir
     record_json_dir = args.record_json_dir
-    agent_env_vars = args.agent_env_vars
+    # agent_env_vars = args.agent_env_vars
     game_state_file = args.game_state_file
 
     agents = [
