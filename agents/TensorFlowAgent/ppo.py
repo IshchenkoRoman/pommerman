@@ -8,7 +8,7 @@ class BasePPO(object):
         self.action_space = action_space
         self.observation_space = observation_space
         self.scope = scope
-        self.action_bound = [0.001, 4.999]
+        self.action_bound = [0.001, 5.999]
         self.num_state = self.observation_space
         self.num_action = 1
         self.cliprange = args.cliprange
@@ -16,7 +16,10 @@ class BasePPO(object):
         if not os.path.exists(self.checkpoint_path):
             os.makedirs(self.checkpoint_path)
         with tf.variable_scope("input"):
-            self.s = tf.placeholder("float", [None, self.num_state])
+            # self.s = tf.placeholder("float", [None, 3, 11, 11], name="input_observation")
+            self.s = tf.placeholder("float", [None, 11], name="input_observation")
+        with tf.variable_scope("input"):
+            self.ammo = tf.placeholder(tf.int32, name="input_ammos")
         with tf.variable_scope("action"):
             self.a = tf.placeholder(shape=[None, self.num_action], dtype=tf.float32)
         with tf.variable_scope("target_value"):
@@ -50,7 +53,6 @@ class BasePPO(object):
             pg_losses2 = self.advantage * tf.clip_by_value(ratio, 1.0 - self.cliprange, 1.0 + self.cliprange)
             self.actor_loss = -tf.reduce_mean(tf.minimum(pg_losses, pg_losses2))
 
-
     def load_model(self, sess, saver):
 
         checkpoint = tf.train.get_checkpoint_state(self.checkpoint_path)
@@ -65,15 +67,14 @@ class BasePPO(object):
         print("....................save model...................")
         saver.save(sess, "".join([self.checkpoint_path, "/", "Pommerman", "-", str(time_step), ".ckpt"]))
 
-    def choose_action(self, s, sess):
+    def choose_action(self, s, ammo, sess):
 
-        s = s[np.newaxis, :]
-        a = sess.run(self.sample_op, {self.s: s})
+        a = sess.run(self.sample_op, {self.s: s, self.ammo: ammo})
 
         return (a)
 
     def get_v(self, s, sess):
-        if s.ndim < 2 : s = s[np.newaxis, :]
+
         return (sess.run(self.value, {self.s: s})[0,0])
 
 class MlpPPO(BasePPO):
@@ -83,11 +84,29 @@ class MlpPPO(BasePPO):
         super().__init__(action_space, observation_space, scope, args)
         self.build_net()
 
+    def _cnn_block(self, scope, num_outputs=100, trainable=False):
+
+        with tf.variable_scope(scope):
+
+            board = tf.manip.reshape(self.s, [-1, 11, 11, 1], name="reshaped_input")
+
+            filter_one = tf.get_variable("w01", [1, 1, 1, num_outputs], initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32, trainable=trainable)
+            filter_two = tf.get_variable("w02", [2, 2, num_outputs, num_outputs], initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32, trainable=trainable)
+
+            stage_one = tf.nn.conv2d(input=board, filter=filter_one, strides=[1, 1, 1, 1], padding="SAME", name="stage_one")
+            stage_two = tf.nn.conv2d(input=stage_one, filter=filter_two, strides=[1, 1, 1, 1], padding="SAME", name="stage_two")
+            stage_two_flatten = tf.contrib.layers.flatten(stage_two)
+
+        return (stage_two_flatten)
+
+
     def build_critic_net(self, scope):
 
         with tf.variable_scope(scope):
 
-            dl1 = tf.contrib.layers.fully_connected(inputs=self.s, num_outputs=100, activation_fn=tf.nn.relu, scope='dl1')
+            board = tf.manip.reshape(self.s, [-1, 121])
+
+            dl1 = tf.contrib.layers.fully_connected(inputs=board, num_outputs=100, activation_fn=tf.nn.relu, scope='dl1')
 
             value = tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=1, activation_fn=None, scope="value")
 
@@ -95,19 +114,100 @@ class MlpPPO(BasePPO):
 
     def build_actor_net(self, scope, trainable):
 
-        with tf.variable_scope(scope):
-            dl1 = tf.contrib.layers.fully_connected(inputs=self.s, num_outputs=200, activation_fn=tf.nn.relu, trainable=trainable, scope="dl1")
+        cnn_flatten = self._cnn_block(scope, num_outputs=200, trainable=trainable)
 
-            dl1 = tf.clip_by_value(dl1, 1, 4.999)
+        with tf.variable_scope(scope):
+
+            dl1 = tf.contrib.layers.fully_connected(inputs=cnn_flatten, num_outputs=200, activation_fn=tf.nn.relu, trainable=trainable, scope="dl1")
+
+            dl1 = tf.clip_by_value(dl1, 1, 5.999)
 
             mu = 2 * tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.tanh, trainable=trainable, scope="mu")
-            mu = tf.clip_by_value(mu, 1, 4.999)
+            mu = tf.clip_by_value(mu, 1, 5.999)
 
             sigma = tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.softplus, trainable=trainable, scope="sigma")
-            sigma = tf.clip_by_value(sigma, 1, 4.999)
+            sigma = tf.clip_by_value(sigma, 1, 5.999)
 
             norm_dist = tf.contrib.distributions.Normal(loc=mu, scale=sigma, allow_nan_stats=False)
 
         param = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope)
 
         return (norm_dist, param)
+
+
+# class MlpPPO(BasePPO):
+#
+#     def __init__(self, action_space, observation_space, scope, args):
+#
+#         super().__init__(action_space, observation_space, scope, args)
+#         self.build_net()
+#
+#     def _inception_block(self, scope, num_outputs=100, trainable=False):
+#
+#         with tf.variable_scope(scope):
+#
+#             board = tf.manip.reshape(self.s, [-1, 11, 11, 3], name="reshaped_input")
+#
+#             # initialize weights
+#             filter_one = tf.get_variable("w01", [1, 1, 3, num_outputs], initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32, trainable=trainable)
+#             filter_one_1 = tf.get_variable("w11", [1, 1, 3, num_outputs], initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32, trainable=trainable)
+#             filter_one_2 = tf.get_variable("w12", [1, 1, 3, num_outputs], initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32, trainable=trainable)
+#
+#             filter_two_1 = tf.get_variable("w21", [1, 1, num_outputs, num_outputs], initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32, trainable=trainable)
+#             filter_two_2 = tf.get_variable("w22", [1, 1, num_outputs, num_outputs], initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32, trainable=trainable)
+#             # filter_two_3 = tf.get_variable("w23", [1, 1, 11, 11], initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32, trainable=trainable)
+#
+#
+#             # description of inception block
+#             final_one = tf.nn.conv2d(input=board, filter=filter_one, strides=[1, 1, 1, 1], padding="SAME", name="one_final")
+#
+#             # part one
+#             stage_one_1 = tf.nn.conv2d(input=board, filter=filter_one_1, strides=[1, 1, 1, 1], padding="SAME", name="stage_one_1")
+#             stage_one_2 = tf.nn.conv2d(input=board, filter=filter_one_2, strides=[1, 1, 1, 1], padding="SAME", name="stage_one_2")
+#             # stage_one_max_pool = tf.layers.max_pooling2d(inputs=self.board, pool_size=[2, 2], strides=(1, 1), padding="SAME", name="stage_one_max_pool")
+#
+#             # part two
+#             stage_two_1 = tf.nn.conv2d(input=stage_one_1, filter=filter_two_1, strides=[1, 1, 1, 1], padding="SAME", name="stage_two_1")
+#             stage_two_2 = tf.nn.conv2d(input=stage_one_2, filter=filter_two_2, strides=[1, 1, 1, 1], padding="SAME", name="stage_two_2")
+#             # stage_two_3 = tf.nn.conv2d(input=stage_one_max_pool, filter=filter_two_3, strides=[1, 1, 1, 1], padding="SAME", name="stage_two_3")
+#
+#             # merge
+#             concat = tf.concat([final_one, stage_two_1, stage_two_2], axis=0, name="inception_block")
+#             inception = tf.nn.relu(concat)
+#             inception_flatten = tf.contrib.layers.flatten(inception)
+#
+#         return (inception_flatten)
+#
+#     def build_critic_net(self, scope):
+#
+#         with tf.variable_scope(scope):
+#
+#             board = tf.contrib.layers.flatten(self.s)
+#
+#             dl1 = tf.contrib.layers.fully_connected(inputs=board, num_outputs=100, activation_fn=tf.nn.relu, scope='dl1')
+#
+#             value = tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=1, activation_fn=None, scope="value")
+#
+#             return (value)
+#
+#     def build_actor_net(self, scope, trainable):
+#
+#         inception_flatten = self._inception_block(scope, num_outputs=200, trainable=trainable)
+#
+#         with tf.variable_scope(scope):
+#
+#             dl1 = tf.contrib.layers.fully_connected(inputs=inception_flatten, num_outputs=200, activation_fn=tf.nn.relu, trainable=trainable, scope="dl1")
+#
+#             dl1 = tf.clip_by_value(dl1, 1, 5.999)
+#
+#             mu = 2 * tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.tanh, trainable=trainable, scope="mu")
+#             mu = tf.clip_by_value(mu, 1, 5.999)
+#
+#             sigma = tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.softplus, trainable=trainable, scope="sigma")
+#             sigma = tf.clip_by_value(sigma, 1, 5.999)
+#
+#             norm_dist = tf.contrib.distributions.Normal(loc=mu, scale=sigma, allow_nan_stats=False)
+#
+#         param = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope)
+#
+#         return (norm_dist, param)

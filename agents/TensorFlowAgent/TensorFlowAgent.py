@@ -53,10 +53,17 @@ class TensorFlowAgent(BaseAgent):
 
         return (pommerman.make("PommeFFACompetition-v0", agents))
 
+    def _form_observation_agent(self, curr_state):
+
+        curr_states = curr_state[self.agent_id]
+        board = np.array(curr_states["board"])
+        ammo = curr_states["ammo"]
+
+        return (board, ammo)
+
     def process(self, sess, saver, render=False):
 
         curr_state = self.env.reset()
-        # curr_state = self.env.getobservation()
         next_state = 0
         total_rewards = 0
         episode_length = 0
@@ -76,24 +83,29 @@ class TensorFlowAgent(BaseAgent):
                     self.env.render()
 
                 all_actions = self.env.act(curr_state)
-                curr_state_a = curr_state[self.agent_id]["board"].ravel()
-                action = self.ppo.choose_action(curr_state_a, sess)
+                # curr_state_a = curr_state[self.agent_id]["board"].ravel()
+
+                updated_input, ammo = self._form_observation_agent(curr_state)
+
+                action = self.ppo.choose_action(updated_input, ammo, sess)
                 action = np.max(np.int32(action))
                 all_actions[self.agent_id] = action
                 next_state, reward, self.terminal, _ = self.env.step(all_actions)
 
                 # agent_state = self.env.featurize(next_state[self.agent_id])
-                agent_state = curr_state[self.agent_id]["board"].ravel()
-                agent_reward = reward[self.agent_id]
+                # agent_state = curr_state[self.agent_id]["board"].ravel()
+                self.agent_reward = reward[self.agent_id]
 
-                total_rewards += agent_reward
+                total_rewards += self.agent_reward
                 episode_length += 1
-                states_buf.append(agent_state)
+                states_buf.append(updated_input)
                 actions_buf.append(action)
-                rewards_buf.append(agent_reward)
+                rewards_buf.append(self.agent_reward)
 
                 curr_state = next_state
                 if self.terminal:
+
+                    print("AR = ", self.agent_reward, reward)
                     print('ID :' + self.scope + ', global episode :' + str(
                     global_episodes)+ ', episode length :' + str(episode_length)+ ', total reward :' + str(total_rewards))
                     curr_state = self.env.reset()
@@ -104,9 +116,10 @@ class TensorFlowAgent(BaseAgent):
                     self.summary_writer.flush()
                     total_rewards = 0
                     episode_length = 0
+                    self.agent_reward = 0
                     break
 
-                bootstrap_value = self.ppo.get_v(np.array(next_state[self.agent_id]["board"].ravel()), sess)
+                bootstrap_value = self.ppo.get_v(updated_input, sess)
 
                 if states_buf:
                     discounted_r = []
@@ -138,7 +151,7 @@ class TensorFlowAgent(BaseAgent):
         [sess.run(self.train_op_actor, feed_dict=feed_dict_actor) for _ in range(self.training_step)]
         [sess.run(self.train_op_critic, feed_dict=feed_dict_critic) for _ in range(self.training_step)]
 
-        if self.num_training % 500 == 0:
+        if self.agent_reward == 1:
             self.ppo.save_model(sess, saver, global_episodes)
 
     def choose_action(self, s):
@@ -154,7 +167,6 @@ class TensorFlowAgent(BaseAgent):
     def act(self, obs, action_space):
         pass
 
-
 def main(args):
 
     tf.reset_default_graph()
@@ -162,7 +174,7 @@ def main(args):
     tfa = TensorFlowAgent("TFA", args)
 
     with tf.Session() as sess:
-        saver = tf.train.Saver(max_to_keep=5)
+        saver = tf.train.Saver()
         sess.run(tf.global_variables_initializer())
         tfa.ppo.load_model(sess, saver)
         tfa.process(sess, saver)
