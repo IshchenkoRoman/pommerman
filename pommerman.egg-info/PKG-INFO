@@ -1,0 +1,12 @@
+Metadata-Version: 2.1
+Name: pommerman
+Version: 0.2.0
+Summary: PlayGround: AI Research into Multi-Agent Learning
+Home-page: https://www.pommerman.com
+Author: Pommerman
+Author-email: support@pommerman.com
+License: Apache 2.0
+Description: UNKNOWN
+Platform: UNKNOWN
+Classifier: Programming Language :: Python :: 3.6
+Provides-Extra: extras
