@@ -18,15 +18,54 @@ from pommerman import utility
 
 import tensorflow as tf
 
-# saver = tf.train.import_meta_graph('/home/tools/Tools/raoqiang/facenet/models/facenet/20170807-231648/model-20170807-231648-0.meta')
-#
-# saver.restore(sess,tf.train.latest_checkpoint('/home/tools/Tools/raoqiang/facenet/models/facenet/20170807-231648/'))
+class Pit(object):
+
+    def __init__(self, tfa, saver, game_nums=2):
+
+        self.tfa = tfa
+        self.saver = saver
+        self.game_nums = game_nums
+
+    def launch_games(self, sess, render=True):
+
+        sess.run(tf.global_variables_initializer())
+        self.tfa.restore_weigths(sess, self.saver)
+        env = self.tfa.getEnv()
+
+        reward_board = np.zeros((1, 4))
+
+        for i in range(self.game_nums):
+
+            curr_state = env.reset()
+
+            while True:
+
+                if render:
+                    env.render()
+
+                all_actions = env.act(curr_state)
+                next_state, reward, terminal, _ = env.step(all_actions)
+
+                if terminal:
+
+                    reward_board += np.array(reward)
+
+                    print("Game #{0}, rewards = {1}, reward agent = {2}".format(i, "".join(str(i) + " " for i in reward), reward[self.tfa.agent_id]))
+                    break
+
 
 def main(args):
 
+    tf.reset_default_graph()
+
     with tf.Session() as sess:
+
         tfa = TensorFlowAgent(name="TFA", args=args, sess=sess)
-        tfa.restore_weigths(sess)
+        saver = tf.train.Saver(allow_empty=True)
+        pit = Pit(tfa, saver, game_nums=2)
+
+        pit.launch_games(sess)
+
 
 
 if __name__ == "__main__":
@@ -43,7 +82,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--training_step", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.9)
-    parser.add_argument("--train", type=str, default="True")
+    parser.add_argument("--train", type=str, default="False", choices=["False"])
+    parser.add_argument("--type", type=str, default="Simple", choices=["Simple, CNN"])
 
     args = parser.parse_args()
 

@@ -35,16 +35,17 @@ class TensorFlowAgent(BaseAgent):
         self.agent_id_dec = agent_id + 10
         self.scope = name
         self.trainable = args.train
+        self.type = args.type
 
         self.env = self._make_env()
         self.action_space = 6
         self.observation_space = 121
 
-        self.ppo = MlpPPO(self.action_space, self.observation_space, self.scope, args, self.path_models)
+        self.ppo = MlpPPO(self.action_space, self.observation_space, self.scope, args, self.path_models, type=self.type)
 
         self.summary_writer = tf.summary.FileWriter(args.summary_dir + '/' + args.environment + '/' + args.policy)
         self.global_episodes = tf.Variable(0, dtype=tf.int32, name='global_episodes', trainable=False)
-        self.increse_global_episodes = self.global_episodes.assign_add(1)
+        self.increase_global_episodes = self.global_episodes.assign_add(1)
 
         self.gamma = args.gamma
         self.batch_size = args.batch_size
@@ -54,6 +55,21 @@ class TensorFlowAgent(BaseAgent):
 
         self.imported_graph = None
         self.sess = sess
+
+    def _init_input_for_game(self):
+
+        if self.trainable == "False":
+
+            self.prediction_actions = tf.get_default_graph().get_tensor_by_name("prediction:0")
+            self.input_observation = tf.get_default_graph().get_tensor_by_name(self.type + "_input_observation/state:0")
+            self.input_ammos = tf.get_default_graph().get_tensor_by_name(self.type + "_input_ammos/input_ammos:0")
+            self.input_alive_agents = tf.get_default_graph().get_tensor_by_name(self.type + "_alive_agents/alive_agents:0")
+
+            return (self.prediction_actions, self.input_observation, self.input_ammos, self.input_alive_agents)
+
+    def getEnv(self):
+
+        return (self.env)
 
     def _make_env(self):
         agents = [self if agent_id == self.agent_id else SimpleAgent() for agent_id in range(NUM_AGENTS)]
@@ -68,17 +84,15 @@ class TensorFlowAgent(BaseAgent):
 
         return (board, ammo)
 
-    def restore_weigths(self, sess, path=None):
+    def restore_weigths(self, sess, saver):
 
-        if self.imported_graph:
-            print("Warning! Rewrite, possibly, tf graph!")
-
-        mylist = [f for f in glob.glob(self.path_models + "/" + "*.meta")]
-        if not mylist:
+        list_of_weigths = [f for f in glob.glob(self.path_models + "/" + "*.meta")]
+        if not list_of_weigths:
             raise (Exception("No '.meta' files!"))
-        mylist.sort()
-        self.imported_graph = tf.train.import_meta_graph(mylist[-1])
-        self.imported_graph.restore(sess, path)
+        list_of_weigths.sort()
+
+        self.imported_graph = tf.train.import_meta_graph(list_of_weigths[-1])
+        saver.restore(sess, tf.train.latest_checkpoint(self.path_models))
 
     def _process_terminal(self, global_episodes, episode_length, total_rewards, reward):
 
@@ -105,7 +119,7 @@ class TensorFlowAgent(BaseAgent):
 
             for i in range(0, self.batch_size):
 
-                global_episodes = sess.run(self.increse_global_episodes)
+                global_episodes = sess.run(self.increase_global_episodes)
 
                 if render:
                     self.env.render()
@@ -115,7 +129,7 @@ class TensorFlowAgent(BaseAgent):
                 updated_input, ammo = self._form_observation_agent(curr_state)
 
                 action = self.ppo.choose_action(updated_input, ammo, sess)
-                action = np.max(np.int32(action))
+                action = np.argmax(np.int32(action))
                 all_actions[self.agent_id] = action
                 next_state, reward, self.terminal, _ = self.env.step(all_actions)
 
@@ -185,35 +199,28 @@ class TensorFlowAgent(BaseAgent):
 
     def act(self, obs, action_space):
 
-
         if self.trainable == "False":
             current_obs = obs["board"]
-            prdeiction_actions = tf.get_default_graph().get_tensor_by_name("clip_by_value:0")
+            ammo = obs["ammo"]
 
-            # Updated name of scope
-            # input_obs = tf.get_default_graph().get_tensor_by_name("input_observation/Placeholder:0")
-            # input_bomb = tf.get_default_graph().get_tensor_by_name("input_ammos/Placeholder:0")
+            prdeicted_actions, input_board, input_ammo, input_alive_agents = self._init_input_for_game()
 
-            graph = tf.get_default_graph()
-            list_of_tuples = [op.values() for op in graph.get_operations()]
+            predict = np.array(self.sess.run(prdeicted_actions, feed_dict={input_board: current_obs, input_ammo: ammo}))
+            return (np.argmax(np.trunc(predict)))
 
-            input_obs = tf.get_default_graph().get_tensor_by_name("input_observation/input_observation:0")
-
-            predict = np.array(self.sess.run(prdeiction_actions, feed_dict={input_obs: current_obs}))
-            return (np.amax(predict))
+        pass
 
 def main(args):
 
     tf.reset_default_graph()
 
-
     with tf.Session() as sess:
-        tfa = TensorFlowAgent(name="TFA", args=args, sess=sess)
 
-        saver = tf.train.Saver()
+        tfa = TensorFlowAgent(name="TFA", args=args, sess=sess)
+        saver = tf.train.Saver(allow_empty=True)
         sess.run(tf.global_variables_initializer())
         tfa.ppo.load_model(sess, saver)
-        tfa.process(sess, saver)
+        tfa.process(sess, saver, render=True)
 
 if __name__ == "__main__":
 
@@ -229,7 +236,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--training_step", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.9)
-    parser.add_argument("--train", type=str, default="True")
+    parser.add_argument("--train", type=str, default="True", choices=["True, False"])
+    parser.add_argument("--type", type=str, default="Simple", choices=["Simple, CNN"])
 
 
 

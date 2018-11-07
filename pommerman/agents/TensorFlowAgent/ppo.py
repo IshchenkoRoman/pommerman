@@ -6,7 +6,7 @@ import glob
 
 class BasePPO(object):
 
-    def __init__(self, action_space, observation_space, scope, args, path_models, type="CNN"):
+    def __init__(self, action_space, observation_space, scope, args, path_models, type="Simple"):
 
         self.path_models = path_models
 
@@ -25,23 +25,23 @@ class BasePPO(object):
 
         if not os.path.exists(self.path_models):
             os.makedirs(self.path_models)
-        with tf.variable_scope(self._type + "input_observation"):
+        with tf.variable_scope(self._type + "_input_observation"):
             # self.s = tf.placeholder("float", [None, self.num_state])
             # self.s = tf.placeholder("float", [None, 3, 11, 11], name="input_observation")
             if self._type == "CNN" or self._type == "Simple":
                 self.s = tf.placeholder("float", [None, 11], name="state")
             else:
                 self.s  = tf.placeholder("float", [None, 3, 11, 11], name="state")
-        with tf.variable_scope(self._type + "input_ammos"):
-            self.ammo = tf.placeholder(tf.int32, name="input_ammos")
-        with tf.variable_scope(self._type + "action"):
+        with tf.variable_scope(self._type + "_input_ammos"):
+            self.ammo = tf.placeholder(tf.float32, name="input_ammos")
+        with tf.variable_scope(self._type + "_action"):
             self.a = tf.placeholder(shape=[None, self.num_action], dtype=tf.float32)
-        with tf.variable_scope(self._type + "target_value"):
+        with tf.variable_scope(self._type + "_target_value"):
             self.y = tf.placeholder(shape=[None, 1], dtype=tf.float32)
-        with tf.variable_scope(self._type + "advantages"):
+        with tf.variable_scope(self._type + "_advantages"):
             self.advantage = tf.placeholder(shape=[None, 1], dtype=tf.float32)
-        with tf.variable_scope(self._type + "alive_agents"):
-            self.alive_agents = tf.placeholder(shape=[4], dtype=tf.int8)
+        with tf.variable_scope(self._type + "_alive_agents"):
+            self.alive_agents = tf.placeholder(shape=[4], dtype=tf.int8, name="alive_agents")
 
     def build_critic_net(self, net):
 
@@ -56,13 +56,14 @@ class BasePPO(object):
         self.value = self.build_critic_net("value_net")
 
         if self._type == "CNN":
-            pi, pi_param = self.build_actor_net_cnn("actor_net", trainable=True)
-            old_pi, old_pi_param = self.build_actor_net_cnn("old_actor_net", trainable=False)
+            pi, pi_param = self.build_actor_net_cnn("actor_net_cnn", trainable=True)
+            old_pi, old_pi_param = self.build_actor_net_cnn("old_actor_net_cnn", trainable=False)
         elif self._type == "Simple":
-            pi, pi_param = self.build_actor_net_simple("actor_net", trainable=True)
-            old_pi, old_pi_param = self.build_actor_net_simple("old_actor_net", trainable=False)
+            pi, pi_param = self.build_actor_net_simple("actor_net_simple", trainable=True)
+            old_pi, old_pi_param = self.build_actor_net_simple("old_actor_net_simple", trainable=False)
         self.syn_old_pi = [oldp.assign(p) for p, oldp in zip(pi_param, old_pi_param)]
-        self.sample_op = tf.clip_by_value(tf.squeeze(pi.sample(1), axis=0), self.action_bound[0], self.action_bound[1])[0]
+        self.sample_op = tf.clip_by_value(tf.squeeze(pi.sample(1), axis=0), self.action_bound[0], self.action_bound[1], name="prediction")[0]
+        self.sample_op[5] * self.ammo
 
         with tf.variable_scope('critic_loss'):
             self.adv = self.y - self.value
@@ -100,9 +101,9 @@ class BasePPO(object):
 
 class MlpPPO(BasePPO):
 
-    def __init__(self, action_space, observation_space, scope, args, path_models):
+    def __init__(self, action_space, observation_space, scope, args, path_models, type):
 
-        super().__init__(action_space, observation_space, scope, args, path_models)
+        super().__init__(action_space, observation_space, scope, args, path_models, type)
         self.build_net()
 
     def _cnn_block(self, scope, num_outputs=100, trainable=False):
@@ -138,14 +139,14 @@ class MlpPPO(BasePPO):
 
         with tf.variable_scope(scope):
 
-            dl1 = tf.contrib.layers.fully_connected(inputs=inception_flatten, num_outputs=200, activation_fn=tf.nn.relu, trainable=trainable, scope="dl1")
+            dl1 = tf.contrib.layers.fully_connected(inputs=inception_flatten, num_outputs=200, activation_fn=tf.nn.relu, trainable=trainable, scope="cnn_dl1")
 
             dl1 = tf.clip_by_value(dl1, 1, 5.999)
 
-            mu = 2 * tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.tanh, trainable=trainable, scope="mu")
+            mu = 2 * tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.tanh, trainable=trainable, scope="cnn_mu")
             mu = tf.clip_by_value(mu, 1, 5.999)
 
-            sigma = tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.softplus, trainable=trainable, scope="sigma")
+            sigma = tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.softplus, trainable=trainable, scope="cnn_sigma")
             sigma = tf.clip_by_value(sigma, 1, 5.999)
 
             norm_dist = tf.contrib.distributions.Normal(loc=mu, scale=sigma, allow_nan_stats=False)
