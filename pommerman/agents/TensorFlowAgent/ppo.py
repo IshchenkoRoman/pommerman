@@ -8,6 +8,22 @@ class BasePPO(object):
 
     def __init__(self, action_space, observation_space, scope, args, path_models, type="Simple"):
 
+        """Class with backend of algorithm of PPO.
+        Parameters:
+            action_space: int
+                Count of max actions
+            observation_space: int
+                flatten size of observation
+            scope: str
+                # Deprecated
+            args: Parser.args
+                object, which contain hyper parameters for NN and PPO algorithm, also contain work information
+            path_models: string
+                String path where must be saved weights
+            type: string
+                String, that help understand what type of NN was used, while printing Tensors. Used as prefix in scope names
+        """
+
         self.path_models = path_models
 
         self.action_space = action_space
@@ -16,15 +32,17 @@ class BasePPO(object):
         self.scope = scope
         self._type = type
 
-        self.action_bound = [0.001, 5.999]
-        self.num_state = self.observation_space
-        self.num_action = 1
+        self.action_bound = [0.001, 5.999] # Clip range, that used in NN. Well, without this range we can have vector of inf, and it predict wrong action that not in range [0-5]
+        self.num_state = self.observation_space # Flatten size of observation
+        self.num_action = 1 # Final count of actions
 
         self.args = args
-        self.cliprange = args.cliprange
+        self.cliprange = args.cliprange # Clip range, that used in PPO.
 
         if not os.path.exists(self.path_models):
             os.makedirs(self.path_models)
+
+        # Into variables for neural network
         with tf.variable_scope(self._type + "_input_observation"):
             # self.s = tf.placeholder("float", [None, self.num_state])
             # self.s = tf.placeholder("float", [None, 3, 11, 11], name="input_observation")
@@ -101,6 +119,24 @@ class BasePPO(object):
 
 class MlpPPO(BasePPO):
 
+    """PPO module, that responds for train NN to predict good actions. There are 2 types of NN,
+    that can use PPO- 'Simple'- have flatten full connected architecture. And 'CNN'- before be 'flattened' use some conv
+    filters for get local features.
+
+    Parameters:
+        action_space: int
+            Count of max actions
+        observation_space: int
+            flatten size of observation
+        scope: str
+            # Deprecated
+        args: Parser.args
+            object, which contain hyper parameters for NN and PPO algorithm, also contain work information
+        path_models: string
+            String path where must be saved weights
+        type: string
+            String, that help understand what type of NN was used, while printing Tensors. Used as prefix in scope names
+    """
     def __init__(self, action_space, observation_space, scope, args, path_models, type):
 
         super().__init__(action_space, observation_space, scope, args, path_models, type)
