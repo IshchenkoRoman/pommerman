@@ -51,6 +51,7 @@ class TensorFlowAgent(BaseAgent):
         # Work data agent id, agent_id representation in matrix observation
         self.agent_id = agent_id
         self.agent_id_dec = agent_id + 10
+        self.count_enemies = 3
 
         self.scope = name #depricated
         self.trainable = args.train # Train or play mode
@@ -64,7 +65,7 @@ class TensorFlowAgent(BaseAgent):
         self.ppo = MlpPPO(self.action_space, self.observation_space, self.scope, args, self.path_models, type=self.type)
 
         # Some logs
-        self.summary_writer = tf.summary.FileWriter(args.summary_dir + '/' + args.environment + '/' + args.policy)
+        self.summary_writer = tf.summary.FileWriter("".join([self.curr_path, "/", self.args.summary_dir, "/", self.args.environment, "/", self.args.policy]))
         self.global_episodes = tf.Variable(0, dtype=tf.int32, name='global_episodes', trainable=False)
         self.increase_global_episodes = self.global_episodes.assign_add(1)
 
@@ -78,6 +79,10 @@ class TensorFlowAgent(BaseAgent):
         self.imported_graph = None
         self.sess = sess
 
+        self.game_num = 1
+        self.game_reward = 0
+        self.game_reward_max = -1000
+
     def _init_input_for_game(self):
 
         """ Init output and input nodes for NN prediction."""
@@ -88,8 +93,9 @@ class TensorFlowAgent(BaseAgent):
             self.input_observation = tf.get_default_graph().get_tensor_by_name(self.type + "_input_observation/state:0")
             self.input_ammos = tf.get_default_graph().get_tensor_by_name(self.type + "_input_ammos/input_ammos:0")
             self.input_alive_agents = tf.get_default_graph().get_tensor_by_name(self.type + "_alive_agents/alive_agents:0")
+            self.stack_auxiliary_data = tf.get_default_graph().get_tensor_by_name(self.type + "_stack_auxiliary_data/stack_auxiliary_data:0")
 
-            return (self.prediction_actions, self.input_observation, self.input_ammos, self.input_alive_agents)
+            return (self.prediction_actions, self.input_observation, self.input_ammos, self.input_alive_agents, self.stack_auxiliary_data)
 
     def getEnv(self):
 
@@ -101,18 +107,33 @@ class TensorFlowAgent(BaseAgent):
 
         return (pommerman.make("PommeFFACompetition-v0", agents))
 
-    def _form_observation_agent(self, curr_state):
+    def _form_observation_agent(self, curr_state, train=1):
 
         """Get from observation for all agent, data for desirable/training agent.
         Parameters:
             curr_state: 2d list of dictionaries [{}]
                 Observation for all agents in game.
         """
-        curr_states = curr_state[self.agent_id]
+        curr_states = curr_state[self.agent_id] if train else curr_state
         board = np.array(curr_states["board"])
         ammo = curr_states["ammo"]
 
-        return (board, ammo)
+        alive_agents = curr_states["alive"]
+        alive_agents_nn = np.array(alive_agents[:], dtype=np.float32)
+        blast_strength = np.asarray(curr_states["blast_strength"], dtype=np.float32)
+        can_kick = np.array(int(curr_states["can_kick"]), dtype=np.float32)
+        position = np.array(curr_states["position"], dtype=np.float32)
+
+        del alive_agents[self.agent_id]
+        enemies = np.array(alive_agents[:])
+
+        stack_auxiliary_data = np.append(ammo, position)
+        stack_auxiliary_data = np.append(stack_auxiliary_data, blast_strength)
+        stack_auxiliary_data = np.append(stack_auxiliary_data, can_kick)
+        stack_auxiliary_data = np.append(stack_auxiliary_data, alive_agents_nn)
+        stack_auxiliary_data = np.append(stack_auxiliary_data, enemies)
+
+        return (board, alive_agents, ammo, stack_auxiliary_data)
 
     def restore_weigths(self, sess, saver):
 
@@ -125,17 +146,30 @@ class TensorFlowAgent(BaseAgent):
         self.imported_graph = tf.train.import_meta_graph(list_of_weigths[-1])
         saver.restore(sess, tf.train.latest_checkpoint(self.path_models))
 
-    def _process_terminal(self, global_episodes, episode_length, total_rewards, reward):
+    def _process_terminal(self, global_episodes, episode_length, total_rewards, games_num, reward):
 
         """Logging if environment get terminal state"""
         print("AR = ", self.agent_reward, reward)
         print('ID :' + self.scope + ', global episode :' + str(
-            global_episodes) + ', episode length :' + str(episode_length) + ', total reward :' + str(total_rewards))
+            global_episodes) + ', episode length :' + str(episode_length) + ", Game num :" + str(games_num), ', total reward :' + str(total_rewards))
         summary = tf.Summary()
         summary.value.add(tag='Rewards/Total_Rewards', simple_value=float(total_rewards))
         summary.value.add(tag='Rewards/Episode_Length', simple_value=float(episode_length))
         self.summary_writer.add_summary(summary, global_episodes)
         self.summary_writer.flush()
+
+    def reward_function(self, agents: list, ammo: int) -> float:
+
+        reward = 0.0025
+        count_enemies = len(agents)
+
+        if count_enemies != self.count_enemies:
+
+            reward += ((self.count_enemies - count_enemies) * 0.33)
+            self.count_enemies = count_enemies
+
+        reward = reward + 0.0006 if not ammo else reward - 0.0006
+        return (reward)
 
     def process(self, sess, saver, render=False):
 
@@ -167,7 +201,7 @@ class TensorFlowAgent(BaseAgent):
 
                 all_actions = self.env.act(curr_state)
 
-                updated_input, ammo = self._form_observation_agent(curr_state)
+                updated_input, agents, ammo, stack_auxiliary_data = self._form_observation_agent(curr_state)
 
                 action = self.ppo.choose_action(updated_input, ammo, sess)
                 action = np.argmax(np.int32(action))
@@ -176,7 +210,10 @@ class TensorFlowAgent(BaseAgent):
 
                 self.agent_reward = reward[self.agent_id]
 
-                total_rewards += self.agent_reward
+                agent_episode_reward = self.reward_function(agents, ammo)
+                total_rewards += (self.agent_reward + agent_episode_reward)
+                self.game_reward += (self.agent_reward + agent_episode_reward)
+
                 episode_length += 1
                 states_buf.append(updated_input)
                 actions_buf.append(action)
@@ -186,11 +223,14 @@ class TensorFlowAgent(BaseAgent):
 
                 if self.terminal or self.agent_id_dec not in curr_state[self.agent_id]["alive"]:
 
-                    self._process_terminal(global_episodes, episode_length, total_rewards, reward)
+                    self._process_terminal(global_episodes, episode_length, total_rewards, self.game_num, reward)
                     curr_state = self.env.reset()
                     total_rewards = 0
                     episode_length = 0
                     self.agent_reward = 0
+                    self.count_enemies = 3
+                    self.game_num += 1
+
                     break
 
                 bootstrap_value = self.ppo.get_v(updated_input, sess)
@@ -226,6 +266,7 @@ class TensorFlowAgent(BaseAgent):
         self.num_training += 1
 
         adv = sess.run(self.ppo.adv, {self.ppo.s: s, self.ppo.y: r})
+        # print("THIS = >", s.shape, adv.shape)
         feed_dict_actor = {}
         feed_dict_actor[self.ppo.s] = s
         feed_dict_actor[self.ppo.a] = a
@@ -238,8 +279,15 @@ class TensorFlowAgent(BaseAgent):
         [sess.run(self.train_op_actor, feed_dict=feed_dict_actor) for _ in range(self.training_step)]
         [sess.run(self.train_op_critic, feed_dict=feed_dict_critic) for _ in range(self.training_step)]
 
-        if self.agent_reward == 1:
+        if self.agent_reward >= 1 or ((self.game_reward > self.game_reward_max) and self.game_num % 32 == 0):
             self.ppo.save_model(sess, saver, global_episodes)
+
+            self.game_reward_max = self.game_reward
+            self.game_reward = 0
+
+        if self.game_num % 32 == 0:
+            self.game_num = 1
+            self.game_reward = 0
 
     def choose_action(self, s):
         """Deprecated. See PPO.choose_action"""
@@ -274,12 +322,13 @@ class TensorFlowAgent(BaseAgent):
                     'game_type' = {int} 1
         """
         if self.trainable == "False":
-            current_obs = obs["board"]
-            ammo = obs["ammo"]
 
-            prdeicted_actions, input_board, input_ammo, input_alive_agents = self._init_input_for_game()
 
-            predict = np.array(self.sess.run(prdeicted_actions, feed_dict={input_board: current_obs, input_ammo: ammo}))
+            current_obs, agents, ammo, stack_auxiliary_data = self._form_observation_agent(obs, train=0)
+
+            predicted_actions, input_board, input_ammo, input_alive_agents, input_stack_auxiliary_data = self._init_input_for_game()
+
+            predict = np.array(self.sess.run(predicted_actions, feed_dict={input_board: current_obs, input_ammo: ammo, input_stack_auxiliary_data: stack_auxiliary_data}))
             return (np.argmax(np.trunc(predict)))
 
         pass
@@ -294,7 +343,7 @@ def main(args):
         saver = tf.train.Saver(allow_empty=True)
         sess.run(tf.global_variables_initializer())
         tfa.ppo.load_model(sess, saver)
-        tfa.process(sess, saver, render=True)
+        tfa.process(sess, saver, render=False)
 
 if __name__ == "__main__":
 

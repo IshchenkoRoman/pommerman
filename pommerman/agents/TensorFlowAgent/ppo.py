@@ -81,7 +81,7 @@ class BasePPO(object):
             old_pi, old_pi_param = self.build_actor_net_simple("old_actor_net_simple", trainable=False)
         self.syn_old_pi = [oldp.assign(p) for p, oldp in zip(pi_param, old_pi_param)]
         self.sample_op = tf.clip_by_value(tf.squeeze(pi.sample(1), axis=0), self.action_bound[0], self.action_bound[1], name="prediction")[0]
-        self.sample_op[5] * self.ammo
+        # self.sample_op[5] * self.ammo
 
         with tf.variable_scope('critic_loss'):
             self.adv = self.y - self.value
@@ -110,7 +110,6 @@ class BasePPO(object):
     def choose_action(self, s, ammo, sess):
 
         a = sess.run(self.sample_op, {self.s: s, self.ammo: ammo})
-
         return (a)
 
     def get_v(self, s, sess):
@@ -177,13 +176,13 @@ class MlpPPO(BasePPO):
 
             dl1 = tf.contrib.layers.fully_connected(inputs=inception_flatten, num_outputs=200, activation_fn=tf.nn.relu, trainable=trainable, scope="cnn_dl1")
 
-            dl1 = tf.clip_by_value(dl1, 1, 5.999)
+            # dl1 = tf.clip_by_value(dl1, 1, 5.999)
 
             mu = 2 * tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.tanh, trainable=trainable, scope="cnn_mu")
-            mu = tf.clip_by_value(mu, 1, 5.999)
+            # mu = tf.clip_by_value(mu, 1, 5.999)
 
             sigma = tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.softplus, trainable=trainable, scope="cnn_sigma")
-            sigma = tf.clip_by_value(sigma, 1, 5.999)
+            # sigma = tf.clip_by_value(sigma, 1, 5.999)
 
             norm_dist = tf.contrib.distributions.Normal(loc=mu, scale=sigma, allow_nan_stats=False)
 
@@ -201,10 +200,10 @@ class MlpPPO(BasePPO):
             dl1 = tf.contrib.layers.fully_connected(inputs=flatten_input, num_outputs=200, activation_fn=tf.nn.relu, trainable=trainable, scope="simple_dl1")
 
             mu = 2 * tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.tanh, trainable=trainable, scope="simple_mu")
-            mu = tf.clip_by_value(mu, 1, 5.999)
+            mu = tf.clip_by_value(mu, 0.5, 5.999)
 
             sigma = tf.contrib.layers.fully_connected(inputs=dl1, num_outputs=6, activation_fn=tf.nn.softplus, trainable=trainable, scope="simple_sigma")
-            sigma = tf.clip_by_value(sigma, 1, 5.999)
+            sigma = tf.clip_by_value(sigma, 0.5, 5.999)
 
             norm_dist = tf.contrib.distributions.Normal(loc=mu, scale=sigma, allow_nan_stats=False)
 
